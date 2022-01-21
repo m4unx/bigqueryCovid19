@@ -1,0 +1,109 @@
+SELECT * FROM `sandboxbigquery1.Covid19.covid19analysis` LIMIT 5; 
+--Basic exploratory on dataset
+    --how many rows
+    --Region --there is info on region thus we take info from wiki: https://meta.wikimedia.org/wiki/List_of_countries_by_regional_classification
+    --unique category Country-Region
+    --#No. of unique category Country-Region
+    --min & max Confirmed, Death & Recovered by Country-Region
+
+ --Analysis dataset
+    --Clean up data (Data that don't make sense)   
+    --ratio 'Confirmed to Death' & 'Confirmed to Recovered' by Country-Region
+    --ratio 'Confirmed to Death' & 'Confirmed to Recovered' by Region 
+    --from above ratio, is Covid-19 prone to death or recovered?
+    --top 5 country ratio 'Confirmed to Death' & 'Confirmed to Recovered'
+    --which region has the highest 'Confirmed to Death' & 'Confirmed to Recovered'
+    --which day of the week to go shoppping (Malaysia)
+
+--how many rows
+SELECT count(*) AS total_rows FROM `sandboxbigquery1.Covid19.covid19analysis`;
+
+--Region
+SELECT * FROM `sandboxbigquery1.Covid19.covid19analysis` a LEFT JOIN `sandboxbigquery1.Covid19.region_wiki` b ON a.Country_Region = b.Country;
+
+--unique category Country-Region
+SELECT DISTINCT(Country_Region) FROM (SELECT * FROM `sandboxbigquery1.Covid19.covid19analysis` a LEFT JOIN `sandboxbigquery1.Covid19.region_wiki` b ON a.Country_Region = b.Country);
+
+--#No. of unique category Country-Region
+SELECT COUNT(DISTINCT(Country_Region)) FROM (SELECT * FROM `sandboxbigquery1.Covid19.covid19analysis` a LEFT JOIN `sandboxbigquery1.Covid19.region_wiki` b ON a.Country_Region = b.Country);
+
+--min & max Confirmed, Death & Recovered
+    --from this, we know that there are data which is not make sense
+SELECT min(Confirmed) AS confirmed_min, max(Confirmed) AS confirmed_max, min(Deaths) AS deaths_min, max(Deaths) AS deaths_max, 
+min(Recovered) AS recovered_min, max(Recovered) AS recovered_max 
+FROM `sandboxbigquery1.Covid19.covid19analysis`;
+
+--Clean up data (Data that don't make sense)
+    --negative value for Confirmed, Death & Recovered
+SELECT *
+FROM `sandboxbigquery1.Covid19.covid19analysis` WHERE Deaths < 0 OR Confirmed < 0 OR Recovered <0;
+
+--min & max Confirmed, Death & Recovered by Country-Region
+SELECT Country_Region, min(Confirmed) AS confirmed_min, max(Confirmed) AS confirmed_max, min(Deaths) AS deaths_min, max(Deaths) AS deaths_max, 
+min(Recovered) AS recovered_min, max(Recovered) AS recovered_max 
+FROM `sandboxbigquery1.Covid19.covid19analysis`
+GROUP BY Country_Region
+ORDER BY Country_Region ASC;
+
+--To calculate Ratio %:
+--1.Clean up data (Data that don't make sense)
+    --negative value for Confirmed, Death & Recovered
+--2. ratio 'Deaths to Confirmed' & 'Recovered to Confirmed' by Country-Region | need to make sure denominator not zero
+--3. Calc d2conf = (Deaths / Confirmed)*100 & r2conf = (Recovered / Confirmed)*100
+WITH clean_data AS (SELECT *
+FROM `sandboxbigquery1.Covid19.covid19analysis` WHERE Deaths >= 0 OR Confirmed >= 0 OR Recovered >=0),
+clean_data2 AS (SELECT Country_Region, SUM(Deaths) AS deaths_sum, SUM(Confirmed) AS confirmed_sum, SUM(Recovered) AS recovered_sum FROM clean_data 
+GROUP BY Country_Region
+HAVING  confirmed_sum != 0)
+SELECT  clean_data2.Country_Region, 
+ROUND((clean_data2.deaths_sum/ clean_data2.confirmed_sum)*100,2) AS d2conf, 
+ROUND((clean_data2.recovered_sum/ clean_data2.confirmed_sum)*100,2) AS r2conf
+FROM clean_data2 ORDER BY d2conf DESC;
+
+--Top 2 highest ratio 'Deaths to Confirmed' on each Region:
+--1.Clean up data (Data that don't make sense)
+    --negative value for Confirmed, Death & Recovered
+--2. ratio 'Deaths to Confirmed' & 'Recovered to Confirmed' by Country-Region | need to make sure denominator not zero
+--3. Calc d2conf = (Deaths / Confirmed)*100 & r2conf = (Recovered / Confirmed)*100
+--4. Left join with database with Region info
+--5. rank by Country_Region by highest ratio 'Deaths to Confirmed'
+--6. get the top 2 rank by Region (outer query)
+WITH clean_data AS (SELECT *
+    FROM `sandboxbigquery1.Covid19.covid19analysis` WHERE Deaths >= 0 OR Confirmed >= 0 OR Recovered >=0),
+clean_data2 AS (SELECT Country_Region, SUM(Deaths) AS deaths_sum, SUM(Confirmed) AS confirmed_sum, SUM(Recovered) AS recovered_sum FROM clean_data 
+    GROUP BY Country_Region
+    HAVING  confirmed_sum != 0),
+ratio_df AS (SELECT  clean_data2.Country_Region, 
+    ROUND((clean_data2.deaths_sum/ clean_data2.confirmed_sum)*100,2) AS d2conf, 
+    ROUND((clean_data2.recovered_sum/ clean_data2.confirmed_sum)*100,2) AS r2conf
+    FROM clean_data2 ORDER BY d2conf DESC),
+region_df AS (SELECT * FROM ratio_df a LEFT JOIN `sandboxbigquery1.Covid19.region_wiki` b ON a.Country_Region = b.Country),
+rank_df AS (SELECT *, RANK() OVER (PARTITION BY Region ORDER BY d2conf DESC) AS rank_d2conf FROM region_df)
+SELECT * FROM rank_df WHERE rank_d2conf < 3 ORDER BY Region;
+
+--Top 20% Country_Region of the highest ratio 'Deaths to Confirmed':
+--1.Clean up data (Data that don't make sense)
+    --negative value for Confirmed, Death & Recovered
+--2. ratio 'Deaths to Confirmed' & 'Recovered to Confirmed' by Country-Region | need to make sure denominator not zero
+--3. Calc d2conf = (Deaths / Confirmed)*100 & r2conf = (Recovered / Confirmed)*100
+--4. Divide dataset into 5 group (ntile = 5 with each group represent 20%) order by 'Deaths to Confirmed'
+--4. take only the top 20% of group 1(ntile=1)
+WITH clean_data AS (SELECT *
+    FROM `sandboxbigquery1.Covid19.covid19analysis` WHERE Deaths >= 0 OR Confirmed >= 0 OR Recovered >=0),
+    clean_data2 AS (SELECT Country_Region, SUM(Deaths) AS deaths_sum, SUM(Confirmed) AS confirmed_sum, SUM(Recovered) AS recovered_sum FROM clean_data 
+    GROUP BY Country_Region
+    HAVING  confirmed_sum != 0),
+ratio_df AS (SELECT clean_data2.Country_Region, 
+    ROUND((clean_data2.deaths_sum/ clean_data2.confirmed_sum)*100,2) AS d2conf, 
+    ROUND((clean_data2.recovered_sum/ clean_data2.confirmed_sum)*100,2) AS r2conf
+    FROM clean_data2 ORDER BY d2conf DESC),
+ntile_df AS (SELECT *, NTILE(5) OVER (ORDER BY d2conf DESC) AS ntile FROM ratio_df ORDER BY d2conf DESC)
+SELECT * FROM ntile_df WHERE ntile = 1;
+
+--Highest month increment confirmed for Country Malaysia
+WITH yearmonth_data AS (SELECT Confirmed, Country_Region,  
+    FORMAT_DATE('%m-%Y', ObservationDate) AS year_month FROM `sandboxbigquery1.Covid19.covid19analysis` GROUP BY year_month, Country_Region, Confirmed),
+yearmonth_data2 AS (SELECT year_month ,SUM(Confirmed) AS sum_confirmed FROM yearmonth_data WHERE Country_Region = 'Malaysia' GROUP BY year_month),
+yearmonth_data3 AS (SELECT *, lag(sum_confirmed) OVER(PARTITION BY yearmonth_data2.year_month ORDER BY yearmonth_data2.year_month ASC) AS prev_sum_confirmed FROM yearmonth_data2)
+SELECT * FROM yearmonth_data3;
+
